@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#23966f">
+  <meta name="description" content="Sistema independente de gestão da associação de moradores.">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23239970'/%3E%3Cpath d='M32 13l17 7v12c0 10-7 16-17 20-10-4-17-10-17-20V20l17-7z' fill='none' stroke='white' stroke-width='4'/%3E%3Cpath d='M25 32l5 5 10-11' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <title>Bairro Unido</title>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-icon">✓</div>
+        <div><strong id="brandName">Bairro Unido</strong><small>Associação de Moradores</small></div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-page="home">⌂ <span>Início</span></button>
+        <button class="nav-item" data-page="financeiro">▣ <span>Financeiro</span></button>
+        <button class="nav-item" data-page="agendamentos">▦ <span>Agendamentos</span></button>
+        <button class="nav-item" data-page="moradores">♧ <span>Moradores</span></button>
+        <button class="nav-item" data-page="config">⚙ <span>Configurações</span></button>
+      </nav>
+      <div class="offline-pill"><span></span><div><b>Salvo Neste Dispositivo</b><small id="syncText">Offline Ready</small></div></div>
+    </aside>
+
+    <main class="main">
+      <header class="mobile-header">
+        <button id="menuBtn" class="icon-btn">☰</button>
+        <strong id="mobileTitle">Bairro Unido</strong>
+      </header>
+
+      <section id="page-home" class="page active"></section>
+      <section id="page-financeiro" class="page"></section>
+      <section id="page-agendamentos" class="page"></section>
+      <section id="page-moradores" class="page"></section>
+      <section id="page-config" class="page"></section>
+    </main>
+  </div>
+
+  <div id="modalBackdrop" class="modal-backdrop hidden"></div>
+  <div id="modalRoot"></div>
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+  <script>if ('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));</script>
+</body>
+</html>

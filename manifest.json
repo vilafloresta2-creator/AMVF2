@@ -1,0 +1,10 @@
+{
+  "name": "Bairro Unido - Associação de Moradores",
+  "short_name": "Bairro Unido",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7f9fc",
+  "theme_color": "#239970",
+  "description": "Gestão independente da associação de moradores.",
+  "icons": []
+}
