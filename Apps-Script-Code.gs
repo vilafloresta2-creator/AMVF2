@@ -1,0 +1,408 @@
+const N = {
+  Transactions: "Transactions",
+  Bookings: "Bookings",
+  Residents: "Residents",
+  Settings: "Settings",
+  Payments: "Payments"
+};
+
+const H = {
+  Transactions: ["id","type","category","description","amount","date","method","created_date"],
+  Bookings: ["id","residentId","residentName","contact","purpose","date","timeSlot","status","created_date","totalAmount"],
+  Residents: ["id","name","house","phone","email","notes","exempt","paidMonths","created_date","monthlyPaymentIds"],
+  Settings: ["key","value"],
+  Payments: ["id","bookingId","residentId","date","amount","method","description","transactionId","created_date"]
+};
+
+function setup() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  Object.keys(N).forEach(key => {
+    const sheet = ss.getSheetByName(N[key]) || ss.insertSheet(N[key]);
+    sheet.clear();
+    sheet.getRange(1,1,1,H[key].length).setValues([H[key]]);
+    sheet.setFrozenRows(1);
+  });
+  ss.getSheetByName("Settings").getRange(2,1,2,2).setValues([
+    ["associacao","Associação Bairro Unido"],
+    ["taxaMensal","50"]
+  ]);
+  return out({ok:true});
+}
+
+function doGet(e) {
+  try {
+    const action = String((e && e.parameter && e.parameter.action) || "read").toLowerCase();
+    if (action !== "read") throw Error("Ação GET inválida.");
+    return out({ok:true, data:all()});
+  } catch (e) {
+    return out({ok:false, error:String(e)});
+  }
+}
+
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const p = JSON.parse((e && e.postData && e.postData.contents) || "{}");
+    const action = String(p.action || "").toLowerCase();
+    let result;
+
+    if (action === "read") {
+      result = readAll();
+    } else if (p.entity === "Settings" && action === "savesettings") {
+      result = settings(p.data || {});
+    } else if (p.entity === "Residents" && action === "togglepayment") {
+      result = togglePayment(p.id, p.data || {});
+    } else if (action === "create") {
+      result = create(p.entity, p.data || {});
+    } else if (action === "update") {
+      result = update(p.entity, p.id, p.data || {});
+    } else if (action === "delete") {
+      result = del(p.entity, p.id);
+    } else {
+      throw Error("Ação inválida.");
+    }
+
+    return out({ok:true, data:result});
+  } catch (e) {
+    return out({ok:false, error:String(e)});
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function readAll() {
+  return {
+    transactions: objs(sh("Transactions")).map(x => norm(x, "Transactions")),
+    payments: objs(ensureSheet("Payments")).map(x => norm(x, "Payments")),
+    bookings: objs(ensureBookingSheet()).map(x => norm(x, "Bookings")),
+    residents: objs(sh("Residents")).map(x => norm(x, "Residents")),
+    settings: readSettings()
+  };
+}
+
+function readSettings() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Settings");
+  if (!sheet) throw Error("Aba não encontrada: Settings");
+  const values = sheet.getDataRange().getValues();
+  const out = {};
+  values.slice(1).forEach(r => { if (r[0] !== "") out[String(r[0])] = r[1]; });
+  return {
+    associacao: String(out.associacao || "Associação Bairro Unido"),
+    taxaMensal: Number(out.taxaMensal || 0)
+  };
+}
+
+function ensureBookingSheet() {
+  const ss=SpreadsheetApp.getActiveSpreadsheet();
+  let sheet=ss.getSheetByName("Bookings");
+  if(!sheet){ sheet=ss.insertSheet("Bookings"); sheet.getRange(1,1,1,H.Bookings.length).setValues([H.Bookings]); sheet.setFrozenRows(1); return sheet; }
+  const current=sheet.getRange(1,1,1,Math.max(sheet.getLastColumn(),H.Bookings.length)).getValues()[0].map(String);
+  if(current[9] !== "totalAmount") sheet.getRange(1,10).setValue("totalAmount");
+  return sheet;
+}
+
+function ensureSheet(entity) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(N[entity]);
+  if (!sheet) {
+    sheet = ss.insertSheet(N[entity]);
+    sheet.getRange(1,1,1,H[entity].length).setValues([H[entity]]);
+    sheet.setFrozenRows(1);
+  } else {
+    const headers = sheet.getRange(1,1,1,Math.max(sheet.getLastColumn(), H[entity].length)).getValues()[0].map(String);
+    if (headers.slice(0,H[entity].length).join("|") !== H[entity].join("|")) {
+      sheet.getRange(1,1,1,H[entity].length).setValues([H[entity]]);
+    }
+  }
+  return sheet;
+}
+
+function sh(entity) {
+  if(entity === "Bookings") return ensureBookingSheet();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(N[entity]);
+  if (!sheet) throw Error("Aba não encontrada: " + entity);
+  return sheet;
+}
+
+function objs(sheet) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  const headers = values[0];
+  return values.slice(1)
+    .filter(row => row.some(v => v !== ""))
+    .map(row => Object.fromEntries(headers.map((h,i) => [h,row[i]])));
+}
+
+function row(sheet, id) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  const values = sheet.getRange(2,1,lastRow - 1,1).getValues();
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i][0]) === String(id)) return i + 2;
+  }
+  return 0;
+}
+
+function create(entity, data) {
+  if (entity === "Payments") return createPayment(data);
+  const sheet = sh(entity);
+  const id = String(data.id || Utilities.getUuid());
+  if (row(sheet,id)) throw Error("ID já existe.");
+  if (entity === "Bookings") validateBooking(data, null);
+  const obj = {...data, id, created_date:data.created_date || new Date().toISOString()};
+  if (entity === "Residents") {
+    obj.paidMonths = JSON.stringify(data.paidMonths || []);
+    obj.monthlyPaymentIds = JSON.stringify(data.monthlyPaymentIds || {});
+  }
+  sheet.appendRow(H[entity].map(h => cell(obj[h])));
+  return norm(obj, entity);
+}
+
+function update(entity, id, data) {
+  const sheet = sh(entity);
+  const rowNumber = row(sheet,id);
+  if (!rowNumber) throw Error("Registro não encontrado.");
+  const current = objs(sheet).find(x => String(x.id) === String(id)) || {};
+  const obj = {...current, ...data, id:String(id)};
+  if (entity === "Bookings") validateBooking(obj, String(id));
+  if (entity === "Residents") {
+    obj.paidMonths = JSON.stringify(data.paidMonths || []);
+    obj.monthlyPaymentIds = JSON.stringify(data.monthlyPaymentIds || {});
+  }
+  sheet.getRange(rowNumber,1,1,H[entity].length).setValues([H[entity].map(h => cell(obj[h]))]);
+  return norm(obj, entity);
+}
+
+
+function bookingDateKey(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (Object.prototype.toString.call(value) === "[object Date]" && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone() || "America/Sao_Paulo", "yyyy-MM-dd");
+  }
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0,10);
+  const br = s.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+  if (br) return br[3] + "-" + br[2] + "-" + br[1];
+  return s.slice(0,10);
+}
+
+function validateBooking(data, ignoreId) {
+  const date = bookingDateKey(data.date);
+  const timeSlot = String(data.timeSlot || "").trim();
+  if (!date || !timeSlot) throw Error("Informe a data e o horário do agendamento.");
+  const conflict = objs(sh("Bookings")).find(x =>
+    String(x.id) !== String(ignoreId || "") &&
+    bookingDateKey(x.date) === date &&
+    String(x.timeSlot || "").trim() === timeSlot
+  );
+  if (conflict) {
+    throw Error("A sala comunitária já está reservada para esse dia e horário.");
+  }
+}
+
+function createPayment(data) {
+  const bookingId = String(data.bookingId || "").trim();
+  const amount = Number(data.amount) || 0;
+  const method = String(data.method || "").trim();
+  const date = String(data.date || "").trim();
+  if (!bookingId) throw Error("Pagamento sem agendamento.");
+  if (!(amount > 0)) throw Error("Informe um valor de pagamento maior que zero.");
+  if (!method) throw Error("Informe a forma de pagamento.");
+  if (!date) throw Error("Informe a data do pagamento.");
+  const booking = objs(sh("Bookings")).find(x => String(x.id) === bookingId);
+  if (!booking) throw Error("Agendamento não encontrado.");
+  const existing = objs(ensureSheet("Payments")).filter(x => String(x.bookingId) === bookingId);
+  const total = Number(booking.totalAmount) || 0;
+  const received = existing.reduce((sum,x) => sum + (Number(x.amount)||0), 0);
+  if (total > 0 && received + amount > total + 0.009) throw Error("O pagamento ultrapassa o valor total da reserva.");
+  const id = String(data.id || Utilities.getUuid());
+  if (row(ensureSheet("Payments"), id)) throw Error("ID já existe.");
+  const transaction = create("Transactions", {
+    id: Utilities.getUuid(), type:"income", category:"reserva",
+    description: data.description || ("Reserva - " + String(booking.residentName || "")),
+    amount, date, method, created_date:new Date().toISOString()
+  });
+  const obj = {id,bookingId,residentId:String(data.residentId || booking.residentId || ""),date,amount,method,description:String(data.description || ""),transactionId:transaction.id,created_date:data.created_date || new Date().toISOString()};
+  ensureSheet("Payments").appendRow(H.Payments.map(h => cell(obj[h])));
+  return norm(obj,"Payments");
+}
+
+function deletePayment(id) {
+  const sheet=ensureSheet("Payments");
+  const current=objs(sheet).find(x=>String(x.id)===String(id));
+  if(!current) throw Error("Pagamento não encontrado.");
+  if(current.transactionId){
+    const txRow=row(sh("Transactions"),current.transactionId);
+    if(txRow) sh("Transactions").deleteRow(txRow);
+  }
+  const n=row(sheet,id);
+  if(n) sheet.deleteRow(n);
+  return {id:String(id)};
+}
+
+function del(entity, id) {
+  if (entity === "Payments") return deletePayment(id);
+  const sheet = sh(entity);
+  const rowNumber = row(sheet,id);
+  if (!rowNumber) throw Error("Registro não encontrado.");
+  sheet.deleteRow(rowNumber);
+  return {id:String(id)};
+}
+
+function togglePayment(residentId, data) {
+  const month = String(data.month || "").trim();
+  const paid = data.paid === true || String(data.paid).toLowerCase() === "true";
+  const method = String(data.method || "").trim();
+  const paymentDate = String(data.date || "").trim() || Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "America/Sao_Paulo", "yyyy-MM-dd");
+  if (!/^\d{4}-\d{2}$/.test(month)) throw Error("Mês inválido. Use AAAA-MM.");
+  if (paid && !method) throw Error("Informe a forma de pagamento.");
+
+  const residentSheet = sh("Residents");
+  const residentRow = row(residentSheet, residentId);
+  if (!residentRow) throw Error("Morador não encontrado.");
+  const resident = objs(residentSheet).find(x => String(x.id) === String(residentId));
+  if (!resident) throw Error("Morador não encontrado.");
+  if (String(resident.exempt).toLowerCase() === "true" || resident.exempt === true) {
+    throw Error("Morador isento não possui cobrança de mensalidade.");
+  }
+
+  let months = [];
+  let paymentIds = {};
+  try { months = Array.isArray(resident.paidMonths) ? resident.paidMonths : JSON.parse(resident.paidMonths || "[]"); } catch (_) { months = []; }
+  try { paymentIds = (resident.monthlyPaymentIds && typeof resident.monthlyPaymentIds === "object") ? resident.monthlyPaymentIds : JSON.parse(resident.monthlyPaymentIds || "{}"); } catch (_) { paymentIds = {}; }
+  months = months.map(String);
+  const hasMonth = months.includes(month);
+  if (paid && !hasMonth) months.push(month);
+  if (!paid) months = months.filter(m => m !== month);
+
+  const paidMonthsColumn = H.Residents.indexOf("paidMonths") + 1;
+  const paymentIdsColumn = H.Residents.indexOf("monthlyPaymentIds") + 1;
+  residentSheet.getRange(residentRow, paidMonthsColumn).setValue(JSON.stringify(months));
+
+  const txSheet = sh("Transactions");
+  const oldDescription = "Taxa mensal - " + String(resident.name || "Morador") + " - " + month;
+  const transactions = objs(txSheet);
+  let transaction = null;
+  const removedTransactionIds = [];
+
+  if (paid) {
+    if (!hasMonth) {
+      const amount = Number(data.amount) || Number(readSettings().taxaMensal) || 0;
+      const created = create("Transactions", {
+        id:Utilities.getUuid(),
+        type:"income", category:"taxa",
+        description:String(resident.name || "Morador"),
+        amount, date:paymentDate, method,
+        created_date:new Date().toISOString()
+      });
+      transaction = created;
+      paymentIds[month] = String(created.id);
+    }
+  } else {
+    const linkedId = String(paymentIds[month] || "").trim();
+    let removed = false;
+
+    // Primeiro tenta remover pelo ID vinculado ao mês.
+    if (linkedId) {
+      const n = row(txSheet, linkedId);
+      if (n) {
+        txSheet.deleteRow(n);
+        removedTransactionIds.push(linkedId);
+        removed = true;
+      }
+      delete paymentIds[month];
+    }
+
+    // Fallback para mensalidades gravadas antes da vinculação por ID ou
+    // quando o vínculo foi perdido: procura a entrada daquele morador
+    // na mesma competência. Assim o estorno não deixa a entrada no Financeiro.
+    if (!removed) {
+      const residentName = String(resident.name || "Morador").trim();
+      const matches = transactions.filter(t => {
+        if (String(t.category) !== "taxa" || String(t.type) !== "income") return false;
+        const description = String(t.description || "").trim();
+        const txMonth = String(t.date || "").slice(0, 7);
+        return txMonth === month && (
+          description === residentName ||
+          description === oldDescription
+        );
+      });
+
+      // Deve existir no máximo uma mensalidade por morador/mês.
+      const target = matches[0];
+      if (target && target.id) {
+        const n = row(txSheet, target.id);
+        if (n) {
+          txSheet.deleteRow(n);
+          removedTransactionIds.push(String(target.id));
+        }
+      }
+    }
+  }
+
+  if (paymentIdsColumn > 0) residentSheet.getRange(residentRow, paymentIdsColumn).setValue(JSON.stringify(paymentIds));
+  const updatedResident = norm({...resident, paidMonths:months, monthlyPaymentIds:paymentIds}, "Residents");
+  return {resident:updatedResident, transaction, removedTransactionIds};
+}
+
+function settings(data) {
+  const sheet = sh("Settings");
+  sheet.clear();
+  sheet.getRange(1,1,1,2).setValues([H.Settings]);
+  sheet.getRange(2,1,2,2).setValues([
+    ["associacao",String(data.associacao || "Associação Bairro Unido")],
+    ["taxaMensal",String(data.taxaMensal ?? 50)]
+  ]);
+  return readSettings();
+}
+
+function readSettings() {
+  const result = {associacao:"Associação Bairro Unido", taxaMensal:50};
+  objs(sh("Settings")).forEach(row => {
+    if (row.key === "associacao") result.associacao = String(row.value || result.associacao);
+    if (row.key === "taxaMensal") result.taxaMensal = Number(String(row.value).replace(",",".")) || 0;
+  });
+  return result;
+}
+
+function all() {
+  return {
+    transactions:objs(sh("Transactions")).map(x => norm(x,"Transactions")),
+    payments:objs(ensureSheet("Payments")).map(x => norm(x,"Payments")),
+    bookings:objs(ensureBookingSheet()).map(x => norm(x,"Bookings")),
+    residents:objs(sh("Residents")).map(x => norm(x,"Residents")),
+    settings:readSettings()
+  };
+}
+
+function norm(obj, entity) {
+  const x = {...obj};
+  if (entity === "Residents") {
+    x.exempt = String(obj.exempt).toLowerCase() === "true" || obj.exempt === true;
+    try {
+      x.paidMonths = Array.isArray(obj.paidMonths) ? obj.paidMonths : JSON.parse(obj.paidMonths || "[]");
+    } catch (_) {
+      x.paidMonths = [];
+    }
+    try {
+      x.monthlyPaymentIds = (obj.monthlyPaymentIds && typeof obj.monthlyPaymentIds === "object") ? obj.monthlyPaymentIds : JSON.parse(obj.monthlyPaymentIds || "{}");
+    } catch (_) {
+      x.monthlyPaymentIds = {};
+    }
+  }
+  if (x.amount !== undefined) x.amount = Number(x.amount) || 0;
+  return x;
+}
+
+function cell(value) {
+  if (value === undefined || value === null) return "";
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  return value;
+}
+
+function out(value) {
+  return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON);
+}
