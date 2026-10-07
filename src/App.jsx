@@ -95,48 +95,100 @@ function Finance({data,refresh}){
 }
 function Transaction({initial,close,save}){let[f,setF]=useState(initial);const methods={pix:"Pix",cash:"Dinheiro",credit:"Cartão de crédito",debit:"Cartão de débito",transfer:"Transferência",other:"Outro"};return <Modal title={initial.id?"Editar lançamento":"Novo lançamento"} close={close}><F l="Tipo"><select className="input" value={f.type} onChange={e=>setF({...f,type:e.target.value})}><option value="income">Entrada</option><option value="expense">Saída</option></select></F><F l="Forma de pagamento/recebimento"><select className="input" value={f.method||""} onChange={e=>setF({...f,method:e.target.value})}><option value="">Não informado</option>{Object.entries(methods).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></F><F l="Categoria"><select className="input" value={f.category} onChange={e=>setF({...f,category:e.target.value})}>{Object.entries(categories).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></F><F l="Descrição"><input className="input" value={f.description||""} onChange={e=>setF({...f,description:e.target.value})}/></F><F l="Valor"><input className="input" value={f.amount??""} onChange={e=>setF({...f,amount:e.target.value})}/></F><F l="Data"><input className="input" type="date" value={f.date||todayISO()} onChange={e=>setF({...f,date:e.target.value})}/></F><button className="btn btn-primary" style={{marginTop:5}} onClick={()=>save(f)}>Salvar</button></Modal>}
 function Reports({data}){
-  const current=currentMonth(), currentYear=current.slice(0,4);
-  const years=Array.from(new Set([currentYear,...(data.transactions||[]).map(x=>String(x.date||'').slice(0,4)).filter(Boolean),...(data.residents||[]).map(x=>residentStartMonth(x).slice(0,4)).filter(Boolean)])).sort((a,b)=>Number(b)-Number(a));
-  const [year,setYear]=useState(currentYear),[from,setFrom]=useState(`${currentYear}-01-01`),[to,setTo]=useState(`${currentYear}-12-31`),[mode,setMode]=useState('accounts');
-  const inRange=d=>{const x=String(d||'').slice(0,10);return x>=from&&x<=to};
+  const now=currentMonth(), currentYear=now.slice(0,4);
+  const years=Array.from(new Set([
+    currentYear,
+    ...(data.transactions||[]).map(x=>String(x.date||"").slice(0,4)).filter(Boolean),
+    ...(data.residents||[]).map(x=>residentStartMonth(x).slice(0,4)).filter(Boolean),
+    ...(data.bookings||[]).map(x=>bookingDate(x.date).slice(0,4)).filter(Boolean)
+  ])).sort((a,b)=>Number(b)-Number(a));
+  const [year,setYear]=useState(currentYear),[from,setFrom]=useState(`${currentYear}-01-01`),[to,setTo]=useState(`${currentYear}-12-31`),[mode,setMode]=useState("accounts");
+  const inRange=d=>{const x=String(d||"").slice(0,10);return x>=from&&x<=to};
   const tx=(data.transactions||[]).filter(x=>inRange(x.date));
-  const income=tx.filter(x=>x.type==='income').reduce((a,x)=>a+Number(x.amount||0),0);
-  const expense=tx.filter(x=>x.type==='expense').reduce((a,x)=>a+Number(x.amount||0),0);
-  const initialTx=(data.transactions||[]).filter(x=>String(x.date||'').slice(0,10)<from);
-  const initial=initialTx.reduce((a,x)=>a+(x.type==='income'?1:-1)*Number(x.amount||0),0);
-  const result=income-expense;
-  const final=initial+result;
-  const setPeriod=(y)=>{setYear(String(y));setFrom(`${y}-01-01`);setTo(`${y}-12-31`)};
-  const monthsBetween=(a,b)=>{if(!a||!b||a>b)return[];const out=[];let[y,m]=a.split('-').map(Number),[ey,em]=b.split('-').map(Number);while(y<ey||(y===ey&&m<=em)){out.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m===13){m=1;y++}}return out};
-  const monthRows=monthsBetween(from.slice(0,7),to.slice(0,7)).map(m=>{const rows=tx.filter(x=>String(x.date||'').slice(0,7)===m),inc=rows.filter(x=>x.type==='income').reduce((a,x)=>a+Number(x.amount||0),0),out=rows.filter(x=>x.type==='expense').reduce((a,x)=>a+Number(x.amount||0),0);return{m,inc,out,net:inc-out}});
-  const incomeByCat={},expenseByCat={};
-  tx.forEach(x=>{const key=categories[x.category]||x.category||'Outras';const amount=Number(x.amount||0);if(x.type==='income')incomeByCat[key]=(incomeByCat[key]||0)+amount;else expenseByCat[key]=(expenseByCat[key]||0)+amount});
-  const periodEndMonth=to.slice(0,7), cappedEnd=periodEndMonth>current?current:periodEndMonth;
+  const income=tx.filter(x=>x.type==="income").reduce((a,x)=>a+Number(x.amount||0),0);
+  const expense=tx.filter(x=>x.type==="expense").reduce((a,x)=>a+Number(x.amount||0),0);
+  const initialTx=(data.transactions||[]).filter(x=>String(x.date||"").slice(0,10)<from);
+  const initial=initialTx.reduce((a,x)=>a+(x.type==="income"?1:-1)*Number(x.amount||0),0);
+  const result=income-expense, final=initial+result;
+  const monthsBetween=(a,b)=>{
+    if(!a||!b||a>b)return[];
+    const out=[];let[y,m]=a.split("-").map(Number),[ey,em]=b.split("-").map(Number);
+    while(y<ey||(y===ey&&m<=em)){
+      out.push(`${y}-${String(m).padStart(2,"0")}`);m++;
+      if(m===13){m=1;y++}
+    }
+    return out;
+  };
+  const setPeriod=y=>{setYear(String(y));setFrom(`${y}-01-01`);setTo(`${y}-12-31`)};
+  const periodStartMonth=from.slice(0,7), requestedEndMonth=to.slice(0,7), currentEnd=currentMonth();
+  const effectiveEndMonth=requestedEndMonth>currentEnd?currentEnd:requestedEndMonth;
   const pendingMonthsAsOf=resident=>{
     if(resident?.exempt||resident?.inactive)return[];
-    const start=residentStartMonth(resident)||`${end.slice(0,4)}-01`;
-    if(start>end)return[];
-    const paidSet=new Set((resident?.paidMonths||[]).map(String));
-    return monthsBetween(start,end).filter(m=>!paidSet.has(m));
+    const start=residentStartMonth(resident);
+    if(!start||start>effectiveEndMonth)return[];
+    const paid=new Set((resident?.paidMonths||[]).map(String));
+    return monthsBetween(start,effectiveEndMonth).filter(m=>!paid.has(m));
   };
-  const monthlyPending=(data.residents||[]).filter(x=>!x.exempt&&!x.inactive).reduce((sum,r)=>sum+pendingMonthsAsOf(r).length*Number(data.settings?.taxaMensal||0),0);
-  const bookingDue=(data.bookings||[]).filter(x=>bookingDate(x.date).slice(0,10)>=from&&bookingDate(x.date).slice(0,10)<=to).reduce((sum,b)=>{
-    const total=Number(b.totalAmount||0), received=(data.payments||[]).filter(p=>String(p.bookingId)===String(b.id)&&String(p.date||'').slice(0,10)<=to).reduce((a,p)=>a+Number(p.amount||0),0);return sum+Math.max(0,total-received)},0);
-  const receivable=monthlyPending+bookingDue;
-  const exportCSV=()=>{const rows=[['AMVF2 - Associação de Moradores do Vila Floresta 2'],['PRESTAÇÃO DE CONTAS'],[`Período: ${dateBR(from)} a ${dateBR(to)}`],[],['RESUMO'],['Saldo inicial',initial],['Entradas',income],['Saídas',expense],['Resultado do período',result],['Saldo final',final],['Total a receber',receivable],[],['MOVIMENTAÇÃO MENSAL'],['Mês','Entradas','Saídas','Resultado']];monthRows.forEach(r=>rows.push([monthLabel(r.m),r.inc,r.out,r.net]));rows.push([],['RECEITAS POR CATEGORIA'],['Categoria','Valor']);Object.entries(incomeByCat).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>rows.push([k,v]));rows.push([],['DESPESAS POR CATEGORIA'],['Categoria','Valor']);Object.entries(expenseByCat).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>rows.push([k,v]));rows.push([],['LANÇAMENTOS DO PERÍODO'],['Data','Tipo','Categoria','Descrição','Forma','Valor']);tx.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(x=>rows.push([x.date,x.type==='income'?'Entrada':'Saída',categories[x.category]||x.category,x.description||'',x.method||'',x.amount]));csvDownload(`prestacao_de_contas_${from}_${to}.csv`,rows)};
+  const fee=Number(data.settings?.taxaMensal||0);
+  const monthlyReceivable=(data.residents||[]).filter(r=>!r.exempt&&!r.inactive).reduce((sum,r)=>sum+pendingMonthsAsOf(r).length*fee,0);
+  const bookingReceivable=(data.bookings||[])
+    .filter(b=>{const d=bookingDate(b.date).slice(0,10);return d>=from&&d<=to})
+    .reduce((sum,b)=>{
+      const total=Number(b.totalAmount||0);
+      const received=(data.payments||[])
+        .filter(p=>String(p.bookingId)===String(b.id)&&String(p.date||"").slice(0,10)<=to)
+        .reduce((a,p)=>a+Number(p.amount||0),0);
+      return sum+Math.max(0,total-received);
+    },0);
+  const receivable=monthlyReceivable+bookingReceivable;
+  const monthRows=monthsBetween(periodStartMonth,effectiveEndMonth).map(m=>{
+    const rows=tx.filter(x=>String(x.date||"").slice(0,7)===m);
+    const inc=rows.filter(x=>x.type==="income").reduce((a,x)=>a+Number(x.amount||0),0);
+    const out=rows.filter(x=>x.type==="expense").reduce((a,x)=>a+Number(x.amount||0),0);
+    return{m,inc,out,net:inc-out};
+  });
+  const incomeByCat={},expenseByCat={};
+  tx.forEach(x=>{
+    const key=categories[x.category]||x.category||"Outras", amount=Number(x.amount||0);
+    if(x.type==="income")incomeByCat[key]=(incomeByCat[key]||0)+amount;
+    else expenseByCat[key]=(expenseByCat[key]||0)+amount;
+  });
+  const exportCSV=()=>{
+    const rows=[
+      ["AMVF2 - Associação de Moradores do Vila Floresta 2"],
+      ["PRESTAÇÃO DE CONTAS"],
+      [`Período: ${dateBR(from)} a ${dateBR(to)}`],[],
+      ["RESUMO"],["Saldo inicial",initial],["Entradas",income],["Saídas",expense],["Resultado do período",result],["Saldo final",final],["A receber",receivable],[],
+      ["MOVIMENTAÇÃO MENSAL"],["Mês","Entradas","Saídas","Resultado"]
+    ];
+    monthRows.forEach(r=>rows.push([monthLabel(r.m),r.inc,r.out,r.net]));
+    rows.push([], ["RECEITAS POR CATEGORIA"],["Categoria","Valor"]);
+    Object.entries(incomeByCat).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>rows.push([k,v]));
+    rows.push([], ["DESPESAS POR CATEGORIA"],["Categoria","Valor"]);
+    Object.entries(expenseByCat).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>rows.push([k,v]));
+    rows.push([], ["LANÇAMENTOS DO PERÍODO"],["Data","Tipo","Categoria","Descrição","Forma","Valor"]);
+    tx.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(x=>rows.push([x.date,x.type==="income"?"Entrada":"Saída",categories[x.category]||x.category,x.description||"",x.method||"",x.amount]));
+    csvDownload(`prestacao_de_contas_${from}_${to}.csv`,rows);
+  };
+  const printTitle=mode==="accounts"?"Prestação de Contas":mode==="residents"?"Relatório de Moradores":mode==="history"?"Histórico Financeiro":"Auditoria";
   return <><Head t="Prestação de contas" s="Resumo financeiro para diretoria e assembleia" a={<div className="report-actions"><button className="btn btn-gray" onClick={exportCSV}><Download size={15}/> Exportar CSV</button><button className="btn btn-primary" onClick={()=>window.print()}><Printer size={15}/> Imprimir / PDF</button></div>}/>
-    <div className="report-tabs no-print"><button className={`btn ${mode==='accounts'?'btn-primary':'btn-gray'}`} onClick={()=>setMode('accounts')}>Prestação de contas</button><button className={`btn ${mode==='residents'?'btn-primary':'btn-gray'}`} onClick={()=>setMode('residents')}>Moradores</button><button className={`btn ${mode==='history'?'btn-primary':'btn-gray'}`} onClick={()=>setMode('history')}>Histórico financeiro</button><button className={`btn ${mode==='audit'?'btn-primary':'btn-gray'}`} onClick={()=>setMode('audit')}>Auditoria</button></div>
-    <div className="report-print-title"><div className="print-brand"><strong>AMVF2</strong><span>Associação de Moradores do Vila Floresta 2</span></div><h2>{mode==='accounts'?'Prestação de Contas':mode==='residents'?'Relatório de Moradores':mode==='history'?'Histórico Financeiro':'Auditoria'}</h2><div>{dateBR(from)} a {dateBR(to)}</div></div>
-    {mode==='accounts'&&<>
-      <div className="card report-filters no-print"><div className="report-period-row"><F l="Ano"><select className="input" value={year} onChange={e=>setPeriod(e.target.value)}>{years.map(y=><option key={y}>{y}</option>)}</select></F><F l="De"><input className="input" type="date" value={from} onChange={e=>{setFrom(e.target.value);setYear(e.target.value.slice(0,4))}}/></F><F l="Até"><input className="input" type="date" value={to} onChange={e=>setTo(e.target.value)}/></F></div></div>
+    <div className="report-tabs no-print">
+      <button className={`btn ${mode==="accounts"?"btn-primary":"btn-gray"}`} onClick={()=>setMode("accounts")}>Prestação de contas</button>
+      <button className={`btn ${mode==="residents"?"btn-primary":"btn-gray"}`} onClick={()=>setMode("residents")}>Moradores</button>
+      <button className={`btn ${mode==="history"?"btn-primary":"btn-gray"}`} onClick={()=>setMode("history")}>Histórico financeiro</button>
+      <button className={`btn ${mode==="audit"?"btn-primary":"btn-gray"}`} onClick={()=>setMode("audit")}>Auditoria</button>
+    </div>
+    <div className="report-print-title"><h2>{printTitle}</h2><div>{dateBR(from)} a {dateBR(to)}</div></div>
+    {mode==="accounts"&&<>
+      <div className="card report-filters no-print"><div className="date-range"><F l="Ano"><select className="input" value={year} onChange={e=>setPeriod(e.target.value)}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></F><F l="De"><input className="input" type="date" value={from} onChange={e=>{setFrom(e.target.value);setYear(e.target.value.slice(0,4))}}/></F><F l="Até"><input className="input" type="date" value={to} onChange={e=>setTo(e.target.value)}/></F></div></div>
       <div className="report-summary"><Stat t="Saldo inicial" v={brl(initial)}/><Stat t="Entradas" v={brl(income)}/><Stat t="Saídas" v={brl(expense)}/><Stat t="Resultado do período" v={brl(result)}/><Stat t="Saldo final" v={brl(final)}/><Stat t="A receber" v={brl(receivable)}/></div>
-      <div className="card report-section"><h3>Movimentação mensal</h3><div className="account-table-wrap"><table className="report-table"><thead><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Resultado</th></tr></thead><tbody>{monthRows.map(r=><tr key={r.m}><td>{monthLabel(r.m)}</td><td className="positive">{brl(r.inc)}</td><td className="negative">{brl(r.out)}</td><td className={r.net>=0?'positive':'negative'}><b>{r.net>=0?'+':'−'} {brl(Math.abs(r.net))}</b></td></tr>)}</tbody></table></div></div>
+      <div className="card report-section"><h3>Movimentação mensal</h3><div style={{overflow:"auto"}}><table><thead><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Resultado</th></tr></thead><tbody>{monthRows.map(r=><tr key={r.m}><td>{monthLabel(r.m)}</td><td className="positive">{brl(r.inc)}</td><td className="negative">{brl(r.out)}</td><td className={r.net>=0?"positive":"negative"}><b>{r.net>=0?"+":"−"} {brl(Math.abs(r.net))}</b></td></tr>)}</tbody></table></div></div>
       <div className="report-grid"><div className="card report-section"><h3>Receitas por categoria</h3>{Object.entries(incomeByCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=><div className="report-line" key={k}><span>{k}</span><b className="positive">{brl(v)}</b></div>)}{!Object.keys(incomeByCat).length&&<div className="empty-state">Nenhuma receita no período.</div>}</div><div className="card report-section"><h3>Despesas por categoria</h3>{Object.entries(expenseByCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=><div className="report-line" key={k}><span>{k}</span><b className="negative">{brl(v)}</b></div>)}{!Object.keys(expenseByCat).length&&<div className="empty-state">Nenhuma despesa no período.</div>}</div></div>
-      <div className="card report-table" style={{padding:8,overflow:'auto',marginTop:16}}><h3 style={{padding:'0 10px'}}>Lançamentos do período</h3><table><thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Forma</th><th>Valor</th></tr></thead><tbody>{tx.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(x=><tr key={x.id}><td>{dateBR(x.date)}</td><td>{x.type==='income'?'Entrada':'Saída'}</td><td>{categories[x.category]||x.category}</td><td>{x.description||'—'}</td><td>{x.method||'—'}</td><td className={x.type==='income'?'positive':'negative'}>{x.type==='income'?'+':'−'} {brl(x.amount)}</td></tr>)}</tbody></table>{!tx.length&&<div className="empty-state">Nenhum lançamento no período.</div>}</div>
+      <div className="card report-table" style={{padding:8,overflow:"auto",marginTop:16}}><h3 style={{padding:"0 10px"}}>Lançamentos do período</h3><table><thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Forma</th><th>Valor</th></tr></thead><tbody>{tx.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(x=><tr key={x.id}><td>{dateBR(x.date)}</td><td>{x.type==="income"?"Entrada":"Saída"}</td><td>{categories[x.category]||x.category}</td><td>{x.description||"—"}</td><td>{x.method||"—"}</td><td className={x.type==="income"?"positive":"negative"}>{x.type==="income"?"+":"−"} {brl(x.amount)}</td></tr>)}</tbody></table>{!tx.length&&<div className="empty-state">Nenhum lançamento no período.</div>}</div>
     </>}
-    {mode==='residents'&&<><div className="card report-filters no-print"><F l="Mês de referência"><input className="input" type="month" value={from.slice(0,7)} onChange={e=>{const x=e.target.value;setFrom(`${x}-01`);const d=new Date(Number(x.slice(0,4)),Number(x.slice(5,7)),0);setTo(`${x}-${String(d.getDate()).padStart(2,'0')}`)}}/></F></div><div className="report-summary"><Stat t="Moradores" v={(data.residents||[]).filter(x=>!x.inactive).length}/><Stat t="Pagos" v={(data.residents||[]).filter(x=>!x.inactive&&(x.exempt||(x.paidMonths||[]).includes(from.slice(0,7)))).length}/><Stat t="Pendentes" v={(data.residents||[]).filter(x=>!x.exempt&&!x.inactive&&residentPendingMonths(x).includes(from.slice(0,7))).length}/><Stat t="% recebido" v={`${(data.residents||[]).filter(x=>!x.inactive).length?Math.round((data.residents||[]).filter(x=>!x.inactive&&(x.exempt||(x.paidMonths||[]).includes(from.slice(0,7)))).length/(data.residents||[]).filter(x=>!x.inactive).length*100):0}%`}/></div><div className="card report-table" style={{padding:8,overflow:'auto'}}><table><thead><tr><th>Morador</th><th>Endereço</th><th>Meses pendentes</th><th>Valor em aberto</th></tr></thead><tbody>{(data.residents||[]).filter(x=>!x.inactive).map(x=><tr key={x.id}><td><b>{x.name}</b></td><td>{x.house||'—'}</td><td>{residentPendingMonths(x).length}</td><td>{brl(residentPendingMonths(x).length*Number(data.settings?.taxaMensal||0))}</td></tr>)}</tbody></table></div></>}
-    {mode==='history'&&<div className="card report-table" style={{padding:8,overflow:'auto'}}><table><thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Forma</th><th>Valor</th></tr></thead><tbody>{(data.transactions||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=><tr key={x.id}><td>{dateBR(x.date)}</td><td>{x.type==='income'?'Entrada':'Saída'}</td><td>{categories[x.category]||x.category}</td><td>{x.description||'—'}</td><td>{x.method||'—'}</td><td>{brl(x.amount)}</td></tr>)}</tbody></table></div>}
-    {mode==='audit'&&<div className="card report-table" style={{padding:8,overflow:'auto'}}><div style={{padding:'10px 10px 0'}}><h3>Histórico de alterações</h3><p style={{color:'#64748b',fontSize:13}}>Registros de quem fez a operação e quando. O responsável é definido em Configurações.</p></div><table><thead><tr><th>Data</th><th>Responsável</th><th>Ação</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>{(data.audit||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=><tr key={x.id}><td>{new Date(x.date).toLocaleString('pt-BR')}</td><td>{x.actor||'Diretoria'}</td><td>{x.action}</td><td>{x.description}</td><td>{Number(x.amount||0)?brl(x.amount):'—'}</td></tr>)}</tbody></table>{!(data.audit||[]).length&&<div className="empty-state">Ainda não há registros de auditoria.</div>}</div>}
+    {mode==="residents"&&<><div className="card report-filters no-print"><F l="Mês de referência"><input className="input" type="month" value={from.slice(0,7)} onChange={e=>{const x=e.target.value;setFrom(`${x}-01`);const d=new Date(Number(x.slice(0,4)),Number(x.slice(5,7)),0);setTo(`${x}-${String(d.getDate()).padStart(2,"0")}`)}}/></F></div><div className="report-summary"><Stat t="Moradores" v={(data.residents||[]).filter(x=>!x.inactive).length}/><Stat t="Pagos" v={(data.residents||[]).filter(x=>!x.inactive&&(x.exempt||(x.paidMonths||[]).includes(from.slice(0,7)))).length}/><Stat t="Pendentes" v={(data.residents||[]).filter(x=>!x.exempt&&!x.inactive&&residentPendingMonths(x).includes(from.slice(0,7))).length}/><Stat t="% recebido" v={`${(data.residents||[]).filter(x=>!x.inactive).length?Math.round((data.residents||[]).filter(x=>!x.inactive&&(x.exempt||(x.paidMonths||[]).includes(from.slice(0,7)))).length/(data.residents||[]).filter(x=>!x.inactive).length*100):0}%`}/></div><div className="card report-table" style={{padding:8,overflow:"auto"}}><table><thead><tr><th>Morador</th><th>Endereço</th><th>Meses pendentes</th><th>Valor em aberto</th></tr></thead><tbody>{(data.residents||[]).filter(x=>!x.inactive).map(x=><tr key={x.id}><td><b>{x.name}</b></td><td>{x.house||"—"}</td><td>{residentPendingMonths(x).length}</td><td>{brl(residentPendingMonths(x).length*Number(data.settings?.taxaMensal||0))}</td></tr>)}</tbody></table></div></>}
+    {mode==="history"&&<div className="card report-table" style={{padding:8,overflow:"auto"}}><table><thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Forma</th><th>Valor</th></tr></thead><tbody>{(data.transactions||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=><tr key={x.id}><td>{dateBR(x.date)}</td><td>{x.type==="income"?"Entrada":"Saída"}</td><td>{categories[x.category]||x.category}</td><td>{x.description||"—"}</td><td>{x.method||"—"}</td><td>{brl(x.amount)}</td></tr>)}</tbody></table></div>}
+    {mode==="audit"&&<div className="card report-table" style={{padding:8,overflow:"auto"}}><div style={{padding:"10px 10px 0"}}><h3>Histórico de alterações</h3><p style={{color:"#64748b",fontSize:13}}>Registros de quem fez a operação e quando. O responsável é definido em Configurações.</p></div><table><thead><tr><th>Data</th><th>Responsável</th><th>Ação</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>{(data.audit||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(x=><tr key={x.id}><td>{new Date(x.date).toLocaleString("pt-BR")}</td><td>{x.actor||"Diretoria"}</td><td>{x.action}</td><td>{x.description}</td><td>{Number(x.amount||0)?brl(x.amount):"—"}</td></tr>)}</tbody></table>{!(data.audit||[]).length&&<div className="empty-state">Ainda não há registros de auditoria.</div>}</div>}
   </>;
 }
 function Delinquency({data}){
