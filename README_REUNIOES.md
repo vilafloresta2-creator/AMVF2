@@ -1,0 +1,1 @@
+AMVF2 — módulo Reuniões e Assembleias. Substituir src/App.jsx, src/index.css, src/lib/storage.js e Apps-Script-Code.gs. Não executar setup(). Atualizar a implantação existente do Apps Script com nova versão.

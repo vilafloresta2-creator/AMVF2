@@ -4,7 +4,8 @@ const N = {
   Residents: "Residents",
   Settings: "Settings",
   Payments: "Payments",
-  Audit: "Audit"
+  Audit: "Audit",
+  Meetings: "Meetings"
 };
 
 const H = {
@@ -13,7 +14,8 @@ const H = {
   Residents: ["id","name","house","phone","email","notes","exempt","paidMonths","created_date","monthlyPaymentIds"],
   Settings: ["key","value"],
   Payments: ["id","bookingId","residentId","date","amount","method","description","transactionId","created_date"],
-  Audit: ["id","date","actor","action","entity","entityId","description","amount"]
+  Audit: ["id","date","actor","action","entity","entityId","description","amount"],
+  Meetings: ["id","type","title","date","time","location","agenda","participants","decisions","status","notes","created_date"]
 };
 
 function setup() {
@@ -87,7 +89,8 @@ function readAll() {
     bookings: objs(ensureBookingSheet()).map(x => norm(x, "Bookings")),
     residents: objs(sh("Residents")).map(x => norm(x, "Residents")),
     settings: readSettings(),
-    audit: objs(ensureSheet("Audit")).map(x => norm(x, "Audit"))
+    audit: objs(ensureSheet("Audit")).map(x => norm(x, "Audit")),
+    meetings: objs(ensureSheet("Meetings")).map(x => norm(x, "Meetings"))
   };
 }
 
@@ -359,6 +362,7 @@ function logAudit(p, result) {
     else if(entity==="Transactions") label=String(d.description||"Lançamento financeiro");
     else if(entity==="Bookings") label=String(d.residentName||"Reserva");
     else if(entity==="Payments") label=String(d.description||"Pagamento de reserva");
+    else if(entity==="Meetings") label=String(d.title||"Reunião / Assembleia");
     let verb=action==="create"?"Cadastro":action==="update"?"Alteração":action==="delete"?"Exclusão":action==="togglepayment"?(d.paid?"Mensalidade registrada":"Estorno de mensalidade"):action;
     const amount=Number(d.amount||result?.amount||result?.transaction?.amount||0)||0;
     const description=`${verb} — ${label}${d.month?` — ${d.month}`:""}`;
@@ -376,6 +380,7 @@ function restoreBackup(data) {
   replaceSheetData("Bookings", Array.isArray(data.bookings) ? data.bookings : []);
   replaceSheetData("Residents", Array.isArray(data.residents) ? data.residents : []);
   replaceSheetData("Payments", Array.isArray(data.payments) ? data.payments : []);
+  replaceSheetData("Meetings", Array.isArray(data.meetings) ? data.meetings : []);
   restoreSettingsFromBackup(data.settings || {});
 
   SpreadsheetApp.flush();
@@ -453,7 +458,8 @@ function all() {
     bookings:objs(ensureBookingSheet()).map(x => norm(x,"Bookings")),
     residents:objs(sh("Residents")).map(x => norm(x,"Residents")),
     settings:readSettings(),
-    audit:objs(ensureSheet("Audit")).map(x => norm(x,"Audit"))
+    audit:objs(ensureSheet("Audit")).map(x => norm(x,"Audit")),
+    meetings:objs(ensureSheet("Meetings")).map(x => norm(x,"Meetings"))
   };
 }
 
