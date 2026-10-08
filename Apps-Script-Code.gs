@@ -67,8 +67,24 @@ function sanitizeUser(u) {
 const ROLE_PERMISSIONS={
   "Administrador":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio","auditoria","usuarios","configuracoes"],
   "Diretoria":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio"],
+  "Tesoureiro":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio"],
+  "Secretário(a)":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio"],
+  "Secretário":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio"],
   "Consulta":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio"]
 };
+
+const WRITE_PERMISSIONS={
+  "Administrador":["moradores.write","agendamentos.write","financeiro.write","documentos.write","patrimonio.write","configuracoes.write","usuarios.write"],
+  "Diretoria":["moradores.write","agendamentos.write"],
+  "Tesoureiro":["financeiro.write","patrimonio.write"],
+  "Secretário(a)":["documentos.write"],
+  "Secretário":["documentos.write"],
+  "Consulta":[]
+};
+
+function canWrite(session, permission) {
+  return (WRITE_PERMISSIONS[session.role]||[]).includes(permission);
+}
 
 function loginUser(username,password) {
   ensureInitialAdmin();
@@ -123,11 +139,24 @@ function doPost(e) {
     let result;
     if(action==="logout") { CacheService.getScriptCache().remove("session_"+p.token); return out({ok:true,data:true}); }
     if(action==="me") return out({ok:true,data:{user:session,permissions:ROLE_PERMISSIONS[session.role]||[]}});
-    if(action==="users") { if(!can(session,"usuarios")) throw Error("Sem permissão para usuários."); result=usersAction(p); logAudit(p,result,session); return out({ok:true,data:result}); }
+    if(action==="users") { if(session.role!=="Administrador" || !can(session,"usuarios")) throw Error("Somente o Administrador pode gerenciar usuários."); result=usersAction(p); logAudit(p,result,session); return out({ok:true,data:result}); }
     if(action==="changePassword") { result=changePassword(session,p); logAudit({action:"changePassword",entity:"Users",id:session.userId,data:{description:"Alteração da própria senha"}},result,session); return out({ok:true,data:result}); }
     const permission=permissionForEntity(p.entity,action);
-    if(!can(session,permission)) throw Error("Você não tem permissão para esta operação.");
-    if(session.role==="Consulta" && ["create","update","delete","togglepayment","restorebackup","savesettings"].includes(action)) throw Error("Perfil Consulta permite somente visualização.");
+    if(!can(session,permission)) throw Error("Você não tem permissão para acessar este módulo.");
+    const mutating=["create","update","delete","togglepayment","restorebackup","savesettings"].includes(action);
+    if(mutating){
+      if(action==="restorebackup" || action==="savesettings") { if(!canWrite(session,"configuracoes.write")) throw Error("Somente o Administrador pode alterar configurações ou restaurar backup."); }
+      else {
+        let wp=null;
+        if(p.entity==="Transactions") wp="financeiro.write";
+        else if(p.entity==="Residents" && action==="togglepayment") wp="financeiro.write";
+        else if(p.entity==="Residents") wp="moradores.write";
+        else if(p.entity==="Assets") wp="patrimonio.write";
+        else if(p.entity==="Meetings") wp="documentos.write";
+        else if(p.entity==="Bookings" || p.entity==="Payments") wp="agendamentos.write";
+        if(wp && !canWrite(session,wp)) throw Error("Seu perfil permite somente consulta desta função.");
+      }
+    }
     if(p.entity==="Settings" && action==="savesettings") result=settings(p.data||{});
     else if(p.entity==="Residents" && action==="togglepayment") result=togglePayment(p.id,p.data||{});
     else if(action==="restorebackup") { if(session.role!=="Administrador") throw Error("Somente o Administrador pode restaurar backup."); result=restoreBackup(p.data||{}); }
