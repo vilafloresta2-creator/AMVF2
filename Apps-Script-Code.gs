@@ -5,7 +5,8 @@ const N = {
   Settings: "Settings",
   Payments: "Payments",
   Audit: "Audit",
-  Meetings: "Meetings"
+  Meetings: "Meetings",
+  Users: "Users"
 };
 
 const H = {
@@ -15,7 +16,8 @@ const H = {
   Settings: ["key","value"],
   Payments: ["id","bookingId","residentId","date","amount","method","description","transactionId","created_date"],
   Audit: ["id","date","actor","action","entity","entityId","description","amount"],
-  Meetings: ["id","type","title","date","time","location","agenda","participants","decisions","status","notes","created_date"]
+  Meetings: ["id","type","title","date","time","location","agenda","participants","decisions","status","notes","created_date"],
+  Users: ["id","name","username","passwordHash","role","active","created_date","updated_date"]
 };
 
 function setup() {
@@ -26,60 +28,142 @@ function setup() {
     sheet.getRange(1,1,1,H[key].length).setValues([H[key]]);
     sheet.setFrozenRows(1);
   });
-  ss.getSheetByName("Settings").getRange(2,1,2,2).setValues([
+  ss.getSheetByName("Settings").getRange(2,1,3,2).setValues([
     ["associacao","Associação de Moradores do Vila Floresta 2"],
     ["taxaMensal","50"],
     ["responsavel","Diretoria"]
   ]);
+  ensureInitialAdmin();
   return out({ok:true});
+}
+
+function setupUsersOnly() {
+  ensureSheet("Users");
+  ensureInitialAdmin();
+  return out({ok:true});
+}
+
+function ensureInitialAdmin() {
+  const sheet=ensureSheet("Users");
+  const users=objs(sheet);
+  if(users.length) return users[0];
+  const now=new Date().toISOString();
+  const admin={id:Utilities.getUuid(),name:"Administrador AMVF2",username:"admin",passwordHash:hashPassword("AMVF2@2026!"),role:"Administrador",active:true,created_date:now,updated_date:now};
+  sheet.appendRow(H.Users.map(h=>cell(admin[h])));
+  return admin;
+}
+
+function hashPassword(password) {
+  const bytes=Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(password||""),Utilities.Charset.UTF_8);
+  return bytes.map(b=>{const v=(b<0?b+256:b).toString(16);return v.length===1?"0"+v:v;}).join("");
+}
+
+function sanitizeUser(u) {
+  const x={...u}; delete x.passwordHash; return norm(x,"Users");
+}
+
+const ROLE_PERMISSIONS={
+  "Administrador":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio","auditoria","usuarios","configuracoes"],
+  "Diretoria":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio"],
+  "Consulta":["dashboard","moradores","agendamentos","financeiro","relatorios","documentos","patrimonio"]
+};
+
+function loginUser(username,password) {
+  ensureInitialAdmin();
+  const u=objs(ensureSheet("Users")).find(x=>String(x.username).toLowerCase()===String(username||"").trim().toLowerCase());
+  if(!u || !(String(u.active).toLowerCase()==="true" || u.active===true) || String(u.passwordHash)!==hashPassword(password)) throw Error("Usuário ou senha inválidos.");
+  const token=Utilities.getUuid()+Utilities.getUuid();
+  CacheService.getScriptCache().put("session_"+token,JSON.stringify({userId:String(u.id),username:String(u.username),role:String(u.role),name:String(u.name)}),21600);
+  return {token,user:sanitizeUser(u),permissions:ROLE_PERMISSIONS[u.role]||[]};
+}
+
+function requireSession(token) {
+  const raw=CacheService.getScriptCache().get("session_"+String(token||""));
+  if(!raw) throw Error("Sessão expirada. Faça login novamente.");
+  return JSON.parse(raw);
+}
+
+function can(session, permission) {
+  return (ROLE_PERMISSIONS[session.role]||[]).includes(permission);
+}
+
+function permissionForEntity(entity,action) {
+  if(entity==="Users") return "usuarios";
+  if(entity==="Settings") return "configuracoes";
+  if(entity==="Audit") return "auditoria";
+  if(entity==="Residents") return "moradores";
+  if(entity==="Bookings" || entity==="Payments") return "agendamentos";
+  if(entity==="Transactions") return "financeiro";
+  if(entity==="Meetings") return "documentos";
+  return "configuracoes";
 }
 
 function doGet(e) {
   try {
-    const action = String((e && e.parameter && e.parameter.action) || "read").toLowerCase();
-    if (action !== "read") throw Error("Ação GET inválida.");
-    return out({ok:true, data:all()});
-  } catch (e) {
-    return out({ok:false, error:String(e)});
-  }
+    const action=String((e&&e.parameter&&e.parameter.action)||"read").toLowerCase();
+    if(action==="login") throw Error("Login deve ser enviado por POST.");
+    if(action!=="read") throw Error("Ação GET inválida.");
+    const session=requireSession(e&&e.parameter&&e.parameter.token);
+    if(!can(session,"dashboard")) throw Error("Sem permissão.");
+    return out({ok:true,data:all(),user:session});
+  } catch(e) { return out({ok:false,error:String(e)}); }
 }
 
 function doPost(e) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(15000);
+  const lock=LockService.getScriptLock(); lock.waitLock(15000);
   try {
-    const p = JSON.parse((e && e.postData && e.postData.contents) || "{}");
-    const action = String(p.action || "").toLowerCase();
+    const p=JSON.parse((e&&e.postData&&e.postData.contents)||"{}");
+    const action=String(p.action||"").toLowerCase();
+    if(action==="login") return out({ok:true,data:loginUser(p.username,p.password)});
+    const session=requireSession(p.token);
+    if(action==="read") return out({ok:true,data:all(),user:session});
     let result;
+    if(action==="logout") { CacheService.getScriptCache().remove("session_"+p.token); return out({ok:true,data:true}); }
+    if(action==="me") return out({ok:true,data:{user:session,permissions:ROLE_PERMISSIONS[session.role]||[]}});
+    if(action==="users") { if(!can(session,"usuarios")) throw Error("Sem permissão para usuários."); result=usersAction(p); logAudit(p,result,session); return out({ok:true,data:result}); }
+    if(action==="changePassword") { result=changePassword(session,p); logAudit({action:"changePassword",entity:"Users",id:session.userId,data:{description:"Alteração da própria senha"}},result,session); return out({ok:true,data:result}); }
+    const permission=permissionForEntity(p.entity,action);
+    if(!can(session,permission)) throw Error("Você não tem permissão para esta operação.");
+    if(session.role==="Consulta" && ["create","update","delete","togglepayment","restorebackup","savesettings"].includes(action)) throw Error("Perfil Consulta permite somente visualização.");
+    if(p.entity==="Settings" && action==="savesettings") result=settings(p.data||{});
+    else if(p.entity==="Residents" && action==="togglepayment") result=togglePayment(p.id,p.data||{});
+    else if(action==="restorebackup") { if(session.role!=="Administrador") throw Error("Somente o Administrador pode restaurar backup."); result=restoreBackup(p.data||{}); }
+    else if(action==="create") result=create(p.entity,p.data||{});
+    else if(action==="update") result=update(p.entity,p.id,p.data||{});
+    else if(action==="delete") result=del(p.entity,p.id);
+    else throw Error("Ação inválida.");
+    if(action!=="read"&&action!=="restorebackup"&&action!=="savesettings") logAudit(p,result,session);
+    return out({ok:true,data:result,user:session});
+  } catch(e) { return out({ok:false,error:String(e)}); }
+  finally { lock.releaseLock(); }
+}
 
-    if (action === "read") {
-      result = readAll();
-    } else if (p.entity === "Settings" && action === "savesettings") {
-      result = settings(p.data || {});
-    } else if (p.entity === "Residents" && action === "togglepayment") {
-      result = togglePayment(p.id, p.data || {});
-    } else if (action === "restorebackup") {
-      result = restoreBackup(p.data || {});
-    } else if (action === "create") {
-      result = create(p.entity, p.data || {});
-    } else if (action === "update") {
-      result = update(p.entity, p.id, p.data || {});
-    } else if (action === "delete") {
-      result = del(p.entity, p.id);
-    } else {
-      throw Error("Ação inválida.");
-    }
-
-    if (action !== "read" && action !== "restorebackup" && action !== "savesettings") {
-      logAudit(p, result);
-    }
-
-    return out({ok:true, data:result});
-  } catch (e) {
-    return out({ok:false, error:String(e)});
-  } finally {
-    lock.releaseLock();
+function usersAction(p) {
+  const sheet=ensureSheet("Users");
+  if(p.subaction==="list") return objs(sheet).map(sanitizeUser);
+  if(p.subaction==="create") {
+    const d=p.data||{}; if(!d.name||!d.username||!d.password||!d.role) throw Error("Nome, usuário, senha e perfil são obrigatórios.");
+    if(objs(sheet).some(x=>String(x.username).toLowerCase()===String(d.username).trim().toLowerCase())) throw Error("Esse usuário já existe.");
+    const now=new Date().toISOString(),u={id:Utilities.getUuid(),name:String(d.name).trim(),username:String(d.username).trim(),passwordHash:hashPassword(d.password),role:String(d.role),active:d.active!==false,created_date:now,updated_date:now};
+    sheet.appendRow(H.Users.map(h=>cell(u[h]))); return sanitizeUser(u);
   }
+  if(p.subaction==="update") {
+    const d=p.data||{},id=String(p.id),n=row(sheet,id); if(!n) throw Error("Usuário não encontrado.");
+    const cur=objs(sheet).find(x=>String(x.id)===id)||{};
+    if(d.username && objs(sheet).some(x=>String(x.id)!==id&&String(x.username).toLowerCase()===String(d.username).trim().toLowerCase())) throw Error("Esse usuário já existe.");
+    const u={...cur,name:d.name??cur.name,username:d.username??cur.username,role:d.role??cur.role,active:d.active!==undefined?d.active:cur.active,updated_date:new Date().toISOString()};
+    if(d.password) u.passwordHash=hashPassword(d.password);
+    sheet.getRange(n,1,1,H.Users.length).setValues([H.Users.map(h=>cell(u[h]))]); return sanitizeUser(u);
+  }
+  if(p.subaction==="delete") { const id=String(p.id); const n=row(sheet,id); if(!n) throw Error("Usuário não encontrado."); const u=objs(sheet).find(x=>String(x.id)===id); if(String(u.role)==="Administrador"&&objs(sheet).filter(x=>String(x.role)==="Administrador"&&(String(x.active).toLowerCase()==="true"||x.active===true)).length<=1) throw Error("Não é possível excluir o último administrador ativo."); sheet.deleteRow(n); return {id}; }
+  throw Error("Operação de usuários inválida.");
+}
+
+function changePassword(session,p) {
+  const id=String(session.userId),sheet=ensureSheet("Users"),n=row(sheet,id); if(!n) throw Error("Usuário não encontrado.");
+  const cur=objs(sheet).find(x=>String(x.id)===id)||{}; if(String(cur.passwordHash)!==hashPassword(p.currentPassword)) throw Error("Senha atual incorreta.");
+  if(String(p.newPassword||"").length<6) throw Error("A nova senha deve ter pelo menos 6 caracteres.");
+  cur.passwordHash=hashPassword(p.newPassword); cur.updated_date=new Date().toISOString(); sheet.getRange(n,1,1,H.Users.length).setValues([H.Users.map(h=>cell(cur[h]))]); return true;
 }
 
 function readAll() {
@@ -349,7 +433,7 @@ function togglePayment(residentId, data) {
   return {resident:updatedResident, transaction, removedTransactionIds};
 }
 
-function logAudit(p, result) {
+function logAudit(p, result, session) {
   try {
     const action=String(p.action||"").toLowerCase();
     if (!action || action === "read") return;
@@ -366,7 +450,7 @@ function logAudit(p, result) {
     let verb=action==="create"?"Cadastro":action==="update"?"Alteração":action==="delete"?"Exclusão":action==="togglepayment"?(d.paid?"Mensalidade registrada":"Estorno de mensalidade"):action;
     const amount=Number(d.amount||result?.amount||result?.transaction?.amount||0)||0;
     const description=`${verb} — ${label}${d.month?` — ${d.month}`:""}`;
-    ensureSheet("Audit").appendRow(H.Audit.map(h=>cell({id:Utilities.getUuid(),date:new Date().toISOString(),actor:String(settings.responsavel||"Diretoria"),action:verb,entity,entityId:id,description,amount:h==="amount"?amount:undefined}[h])));
+    ensureSheet("Audit").appendRow(H.Audit.map(h=>cell({id:Utilities.getUuid(),date:new Date().toISOString(),actor:String(session?.name||settings.responsavel||"Diretoria"),action:verb,entity,entityId:id,description,amount:h==="amount"?amount:undefined}[h])));
   } catch (_) {}
 }
 
@@ -459,7 +543,8 @@ function all() {
     residents:objs(sh("Residents")).map(x => norm(x,"Residents")),
     settings:readSettings(),
     audit:objs(ensureSheet("Audit")).map(x => norm(x,"Audit")),
-    meetings:objs(ensureSheet("Meetings")).map(x => norm(x,"Meetings"))
+    meetings:objs(ensureSheet("Meetings")).map(x => norm(x,"Meetings")),
+    users:objs(ensureSheet("Users")).map(sanitizeUser)
   };
 }
 

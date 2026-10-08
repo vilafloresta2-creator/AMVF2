@@ -7,8 +7,29 @@ function parseJsonText(text) {
   return JSON.parse(clean);
 }
 
+const SESSION_KEY = "amvf2_session";
+
+export function getSession(){ try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)||"null"); } catch { return null; } }
+export function setSession(session){ if(session) sessionStorage.setItem(SESSION_KEY,JSON.stringify(session)); else sessionStorage.removeItem(SESSION_KEY); }
+export function clearSession(){ sessionStorage.removeItem(SESSION_KEY); }
+export function hasPermission(permission){ return !!getSession()?.permissions?.includes(permission); }
+
+export async function login(username,password){
+  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"login",username,password}),cache:"no-store"});
+  const text=await r.text(); const j=parseJsonText(text); if(!j.ok) throw Error(j.error||"Falha no login.");
+  setSession(j.data); return j.data;
+}
+
+export async function logout(){
+  const s=getSession();
+  try { if(s?.token) await req({action:"logout",token:s.token}); } catch(_) {}
+  clearSession();
+}
+
 async function getAllRaw() {
-  const url = API_URL + (API_URL.includes("?") ? "&" : "?") + "action=read&t=" + Date.now();
+  const session=getSession();
+  if(!session?.token) throw Error("Sessão não iniciada.");
+  const url = API_URL + (API_URL.includes("?") ? "&" : "?") + "action=read&token=" + encodeURIComponent(session.token) + "&t=" + Date.now();
   const r = await fetch(url, {
     method: "GET",
     cache: "no-store",
@@ -22,7 +43,7 @@ async function getAllRaw() {
     const preview = String(text || "").trim().slice(0, 160).replace(/\s+/g, " ");
     throw new Error(`A API de leitura retornou conteúdo que não é JSON: ${preview}`);
   }
-  if (!j.ok) throw Error(j.error || "Erro na API.");
+  if (!j.ok) { if(/sessão|login/i.test(String(j.error||""))) clearSession(); throw Error(j.error || "Erro na API."); }
   return j.data;
 }
 
@@ -50,19 +71,21 @@ function writeAcceptedFallback(p) {
 }
 
 async function req(p) {
+  const session=getSession();
+  const payload={...p,token:p.token||session?.token};
   const r = await fetch(API_URL, {
     method: "POST",
     cache: "no-store",
     redirect: "follow",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(p),
+    body: JSON.stringify(payload),
   });
 
   const text = await r.text();
 
   try {
     const j = parseJsonText(text);
-    if (!j.ok) throw Error(j.error || "Erro na API.");
+    if (!j.ok) { if(/sessão|login/i.test(String(j.error||""))) clearSession(); throw Error(j.error || "Erro na API."); }
     return j.data;
   } catch (postError) {
     if (looksLikeGoogleHtml(text)) return writeAcceptedFallback(p);
@@ -101,3 +124,9 @@ export async function restoreBackup(data) {
   }
   return result;
 }
+
+export async function usersList(){ return req({action:"users",subaction:"list"}); }
+export async function usersCreate(data){ return req({action:"users",subaction:"create",data}); }
+export async function usersUpdate(id,data){ return req({action:"users",subaction:"update",id,data}); }
+export async function usersDelete(id){ return req({action:"users",subaction:"delete",id}); }
+export async function changePassword(currentPassword,newPassword){ return req({action:"changePassword",currentPassword,newPassword}); }
