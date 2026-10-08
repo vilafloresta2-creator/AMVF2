@@ -6,7 +6,8 @@ const N = {
   Payments: "Payments",
   Audit: "Audit",
   Meetings: "Meetings",
-  Users: "Users"
+  Users: "Users",
+  Assets: "Assets"
 };
 
 const H = {
@@ -17,7 +18,8 @@ const H = {
   Payments: ["id","bookingId","residentId","date","amount","method","description","transactionId","created_date"],
   Audit: ["id","date","actor","action","entity","entityId","description","amount"],
   Meetings: ["id","type","title","date","time","location","agenda","participants","decisions","status","notes","created_date"],
-  Users: ["id","name","username","passwordHash","role","active","created_date","updated_date"]
+  Users: ["id","name","username","passwordHash","role","active","created_date","updated_date"],
+  Assets: ["id","name","category","quantity","location","acquisitionDate","value","state","notes","created_date"]
 };
 
 function setup() {
@@ -95,6 +97,7 @@ function permissionForEntity(entity,action) {
   if(entity==="Bookings" || entity==="Payments") return "agendamentos";
   if(entity==="Transactions") return "financeiro";
   if(entity==="Meetings") return "documentos";
+  if(entity==="Assets") return "patrimonio";
   return "configuracoes";
 }
 
@@ -447,6 +450,7 @@ function logAudit(p, result, session) {
     else if(entity==="Bookings") label=String(d.residentName||"Reserva");
     else if(entity==="Payments") label=String(d.description||"Pagamento de reserva");
     else if(entity==="Meetings") label=String(d.title||"Reunião / Assembleia");
+    else if(entity==="Assets") label=String(d.name||"Patrimônio");
     let verb=action==="create"?"Cadastro":action==="update"?"Alteração":action==="delete"?"Exclusão":action==="togglepayment"?(d.paid?"Mensalidade registrada":"Estorno de mensalidade"):action;
     const amount=Number(d.amount||result?.amount||result?.transaction?.amount||0)||0;
     const description=`${verb} — ${label}${d.month?` — ${d.month}`:""}`;
@@ -465,6 +469,7 @@ function restoreBackup(data) {
   replaceSheetData("Residents", Array.isArray(data.residents) ? data.residents : []);
   replaceSheetData("Payments", Array.isArray(data.payments) ? data.payments : []);
   replaceSheetData("Meetings", Array.isArray(data.meetings) ? data.meetings : []);
+  replaceSheetData("Assets", Array.isArray(data.assets) ? data.assets : []);
   restoreSettingsFromBackup(data.settings || {});
 
   SpreadsheetApp.flush();
@@ -544,6 +549,7 @@ function all() {
     settings:readSettings(),
     audit:objs(ensureSheet("Audit")).map(x => norm(x,"Audit")),
     meetings:objs(ensureSheet("Meetings")).map(x => norm(x,"Meetings")),
+    assets:objs(ensureSheet("Assets")).map(x => norm(x,"Assets")),
     users:objs(ensureSheet("Users")).map(sanitizeUser)
   };
 }
