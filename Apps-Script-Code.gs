@@ -7,7 +7,8 @@ const N = {
   Audit: "Audit",
   Meetings: "Meetings",
   Users: "Users",
-  Assets: "Assets"
+  Assets: "Assets",
+  Documents: "Documents"
 };
 
 const H = {
@@ -19,7 +20,8 @@ const H = {
   Audit: ["id","date","actor","action","entity","entityId","description","amount"],
   Meetings: ["id","type","title","date","time","location","agenda","participants","decisions","status","notes","created_date"],
   Users: ["id","name","username","passwordHash","role","active","created_date","updated_date"],
-  Assets: ["id","name","category","quantity","location","acquisitionDate","value","state","notes","created_date"]
+  Assets: ["id","name","category","quantity","location","acquisitionDate","value","state","notes","created_date"],
+  Documents: ["id","title","category","date","description","fileName","fileUrl","fileId","meetingId","meetingTitle","created_date"]
 };
 
 function setup() {
@@ -114,6 +116,7 @@ function permissionForEntity(entity,action) {
   if(entity==="Transactions") return "financeiro";
   if(entity==="Meetings") return "documentos";
   if(entity==="Assets") return "patrimonio";
+  if(entity==="Documents") return "documentos";
   return "configuracoes";
 }
 
@@ -152,13 +155,16 @@ function doPost(e) {
         else if(p.entity==="Residents" && action==="togglepayment") wp="financeiro.write";
         else if(p.entity==="Residents") wp="moradores.write";
         else if(p.entity==="Assets") wp="patrimonio.write";
-        else if(p.entity==="Meetings") wp="documentos.write";
+        else if(p.entity==="Meetings" || p.entity==="Documents") wp="documentos.write";
         else if(p.entity==="Bookings" || p.entity==="Payments") wp="agendamentos.write";
         if(wp && !canWrite(session,wp)) throw Error("Seu perfil permite somente consulta desta função.");
       }
     }
     if(p.entity==="Settings" && action==="savesettings") result=settings(p.data||{});
     else if(p.entity==="Residents" && action==="togglepayment") result=togglePayment(p.id,p.data||{});
+    else if(p.entity==="Documents" && action==="create") result=createDocument(p.data||{});
+    else if(p.entity==="Documents" && action==="update") result=updateDocument(p.id,p.data||{});
+    else if(p.entity==="Documents" && action==="delete") result=deleteDocument(p.id);
     else if(action==="restorebackup") { if(session.role!=="Administrador") throw Error("Somente o Administrador pode restaurar backup."); result=restoreBackup(p.data||{}); }
     else if(action==="create") result=create(p.entity,p.data||{});
     else if(action==="update") result=update(p.entity,p.id,p.data||{});
@@ -347,6 +353,45 @@ function createPayment(data) {
   return norm(obj,"Payments");
 }
 
+function documentsFolder() {
+  const name = "AMVF2 - Documentos";
+  const it = DriveApp.getFoldersByName(name);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(name);
+}
+
+function createDocument(data) {
+  const d={...data}; delete d.fileData; delete d.fileMime;
+  const id=String(d.id||Utilities.getUuid());
+  const sheet=ensureSheet("Documents"); if(row(sheet,id)) throw Error("ID já existe.");
+  if(!data.fileData) throw Error("Selecione um arquivo.");
+  const bytes=Utilities.base64Decode(String(data.fileData));
+  if(bytes.length>8*1024*1024) throw Error("O arquivo deve ter no máximo 8 MB.");
+  const blob=Utilities.newBlob(bytes,String(data.fileMime||"application/octet-stream"),String(data.fileName||"documento"));
+  const file=documentsFolder().createFile(blob);
+  const obj={id,title:String(d.title||"Documento"),category:String(d.category||"Outro"),date:String(d.date||Utilities.formatDate(new Date(),Session.getScriptTimeZone()||"America/Sao_Paulo","yyyy-MM-dd")),description:String(d.description||""),fileName:String(data.fileName||file.getName()),fileUrl:file.getUrl(),fileId:file.getId(),meetingId:String(d.meetingId||""),meetingTitle:String(d.meetingTitle||""),created_date:d.created_date||new Date().toISOString()};
+  sheet.appendRow(H.Documents.map(h=>cell(obj[h]))); return norm(obj,"Documents");
+}
+
+function updateDocument(id,data) {
+  const sheet=ensureSheet("Documents"), n=row(sheet,id); if(!n) throw Error("Documento não encontrado.");
+  const current=objs(sheet).find(x=>String(x.id)===String(id))||{}; const obj={...current,...data,id:String(id)};
+  delete obj.fileData; delete obj.fileMime;
+  if(data.fileData){
+    const oldId=String(current.fileId||""); if(oldId){try{DriveApp.getFileById(oldId).setTrashed(true);}catch(_) {}}
+    const bytes=Utilities.base64Decode(String(data.fileData)); if(bytes.length>8*1024*1024) throw Error("O arquivo deve ter no máximo 8 MB.");
+    const blob=Utilities.newBlob(bytes,String(data.fileMime||"application/octet-stream"),String(data.fileName||"documento"));
+    const file=documentsFolder().createFile(blob); obj.fileName=file.getName(); obj.fileUrl=file.getUrl(); obj.fileId=file.getId();
+  }
+  obj.fileName=String(obj.fileName||""); obj.fileUrl=String(obj.fileUrl||""); obj.fileId=String(obj.fileId||"");
+  sheet.getRange(n,1,1,H.Documents.length).setValues([H.Documents.map(h=>cell(obj[h]))]); return norm(obj,"Documents");
+}
+
+function deleteDocument(id) {
+  const sheet=ensureSheet("Documents"), current=objs(sheet).find(x=>String(x.id)===String(id)); if(!current) throw Error("Documento não encontrado.");
+  if(current.fileId){try{DriveApp.getFileById(String(current.fileId)).setTrashed(true);}catch(_) {}}
+  const n=row(sheet,id); if(n) sheet.deleteRow(n); return {id:String(id)};
+}
+
 function deletePayment(id) {
   const sheet=ensureSheet("Payments");
   const current=objs(sheet).find(x=>String(x.id)===String(id));
@@ -480,6 +525,7 @@ function logAudit(p, result, session) {
     else if(entity==="Payments") label=String(d.description||"Pagamento de reserva");
     else if(entity==="Meetings") label=String(d.title||"Reunião / Assembleia");
     else if(entity==="Assets") label=String(d.name||"Patrimônio");
+    else if(entity==="Documents") label=String(d.title||"Documento");
     let verb=action==="create"?"Cadastro":action==="update"?"Alteração":action==="delete"?"Exclusão":action==="togglepayment"?(d.paid?"Mensalidade registrada":"Estorno de mensalidade"):action;
     const amount=Number(d.amount||result?.amount||result?.transaction?.amount||0)||0;
     const description=`${verb} — ${label}${d.month?` — ${d.month}`:""}`;
@@ -499,6 +545,7 @@ function restoreBackup(data) {
   replaceSheetData("Payments", Array.isArray(data.payments) ? data.payments : []);
   replaceSheetData("Meetings", Array.isArray(data.meetings) ? data.meetings : []);
   replaceSheetData("Assets", Array.isArray(data.assets) ? data.assets : []);
+  replaceSheetData("Documents", Array.isArray(data.documents) ? data.documents : []);
   restoreSettingsFromBackup(data.settings || {});
 
   SpreadsheetApp.flush();
@@ -579,6 +626,7 @@ function all() {
     audit:objs(ensureSheet("Audit")).map(x => norm(x,"Audit")),
     meetings:objs(ensureSheet("Meetings")).map(x => norm(x,"Meetings")),
     assets:objs(ensureSheet("Assets")).map(x => norm(x,"Assets")),
+    documents:objs(ensureSheet("Documents")).map(x => norm(x,"Documents")),
     users:objs(ensureSheet("Users")).map(sanitizeUser)
   };
 }
