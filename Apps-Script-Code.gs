@@ -127,7 +127,7 @@ function doGet(e) {
     if(action!=="read") throw Error("Ação GET inválida.");
     const session=requireSession(e&&e.parameter&&e.parameter.token);
     if(!can(session,"dashboard")) throw Error("Sem permissão.");
-    return out({ok:true,data:all(),user:session});
+    return out({ok:true,data:all(session),user:session});
   } catch(e) { return out({ok:false,error:String(e)}); }
 }
 
@@ -138,7 +138,7 @@ function doPost(e) {
     const action=String(p.action||"").toLowerCase();
     if(action==="login") return out({ok:true,data:loginUser(p.username,p.password)});
     const session=requireSession(p.token);
-    if(action==="read") return out({ok:true,data:all(),user:session});
+    if(action==="read") return out({ok:true,data:all(session),user:session});
     let result;
     if(action==="logout") { CacheService.getScriptCache().remove("session_"+p.token); return out({ok:true,data:true}); }
     if(action==="me") return out({ok:true,data:{user:session,permissions:ROLE_PERMISSIONS[session.role]||[]}});
@@ -549,7 +549,7 @@ function restoreBackup(data) {
   restoreSettingsFromBackup(data.settings || {});
 
   SpreadsheetApp.flush();
-  return all();
+  return all({role:"Administrador"});
 }
 
 function replaceSheetData(entity, items) {
@@ -616,14 +616,14 @@ function readSettings() {
   return result;
 }
 
-function all() {
+function all(session) {
   return {
     transactions:objs(sh("Transactions")).map(x => norm(x,"Transactions")),
     payments:objs(ensureSheet("Payments")).map(x => norm(x,"Payments")),
     bookings:objs(ensureBookingSheet()).map(x => norm(x,"Bookings")),
     residents:objs(sh("Residents")).map(x => norm(x,"Residents")),
     settings:readSettings(),
-    audit:objs(ensureSheet("Audit")).map(x => norm(x,"Audit")),
+    audit:(session && can(session,"auditoria")) ? objs(ensureSheet("Audit")).map(x => norm(x,"Audit")) : [],
     meetings:objs(ensureSheet("Meetings")).map(x => norm(x,"Meetings")),
     assets:objs(ensureSheet("Assets")).map(x => norm(x,"Assets")),
     documents:objs(ensureSheet("Documents")).map(x => norm(x,"Documents")),

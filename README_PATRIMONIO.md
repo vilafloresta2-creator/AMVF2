@@ -16,7 +16,8 @@ Módulo administrativo de patrimônio integrado ao login, permissões e auditori
 
 ### Permissões
 - Administrador: visualizar, cadastrar, editar e excluir.
-- Diretoria: visualizar, cadastrar, editar e excluir.
+- Diretoria: somente visualização.
+- Tesoureiro: cadastrar, editar e excluir.
 - Consulta: somente visualização.
 
 ### Auditoria
