@@ -14,9 +14,9 @@ function LoginPage({onLogin}){
   return <div className="login-screen"><div className="login-card card"><Brand/><div className="login-copy"><h1>Acesso administrativo</h1><p>Entre com seu usuário para acessar o sistema da AMVF2.</p></div><form onSubmit={submit}><F l="Usuário"><input className="input" autoFocus autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)}/></F><F l="Senha"><input className="input" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/></F>{error&&<div className="login-error">{error}</div>}<button className="btn btn-primary" style={{width:"100%",justifyContent:"center"}} disabled={busy}>{busy?"Entrando...":"Entrar"}</button></form><div className="login-help">O primeiro acesso utiliza a conta administrativa inicial criada na planilha.</div></div></div>
 }
 
-function Layout({data,refresh,setData,user,onLogout}){
+function Layout({data,refresh,setData,user,permissions,onLogout}){
   const[menuOpen,setMenuOpen]=useState(false);const closeMenu=()=>setMenuOpen(false);
-  const permission=p=>user?.permissions?.includes(p);
+  const permission=p=>permissions?.includes(p);
   const nav=[
     ["/","Início",Home,"dashboard"],["/financeiro","Financeiro",WalletCards,"financeiro"],["/inadimplencia","Inadimplência",AlertTriangle,"relatorios"],["/relatorios","Prestação de contas",BarChart3,"relatorios"],["/agendamentos","Agendamentos",CalendarDays,"agendamentos"],["/reunioes","Reuniões / Assembleias",FileText,"documentos"],["/moradores","Moradores",Users,"moradores"],["/configuracoes","Configurações",Settings,"configuracoes"],["/usuarios","Usuários",Shield,"usuarios"]
   ].filter(x=>permission(x[3]));
@@ -385,5 +385,5 @@ export default function App(){
   const handleLogout=async()=>{await logout();clearSession();setSessionState(null);setLoading(false)};
   if(!session) return <LoginPage onLogin={handleLogin}/>;
   if(loading) return <div className="login-screen"><div className="login-card card" style={{textAlign:"center"}}>Carregando sistema...</div></div>;
-  return <Layout data={data} refresh={refresh} setData={setData} user={session.user} onLogout={handleLogout}/>;
+  return <Layout data={data} refresh={refresh} setData={setData} user={session.user} permissions={session.permissions||[]} onLogout={handleLogout}/>;
 }
