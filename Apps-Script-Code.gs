@@ -514,22 +514,72 @@ function logAudit(p, result, session) {
   try {
     const action=String(p.action||"").toLowerCase();
     if (!action || action === "read") return;
+
+    // Consultar a lista de usuários não é uma alteração e não deve gerar auditoria.
+    if (action === "users" && String(p.subaction||"").toLowerCase() === "list") return;
+
     const settings=readSettings();
-    const entity=String(p.entity||"System");
-    const id=String(p.id || p.data?.id || result?.id || result?.transaction?.id || "");
+    let entity=String(p.entity||"System");
     const d=p.data||{};
+    let id=String(p.id || d.id || result?.id || result?.transaction?.id || "");
+    let verb="";
     let label=entity;
-    if(entity==="Residents") label=String(d.name||result?.resident?.name||"Morador");
-    else if(entity==="Transactions") label=String(d.description||"Lançamento financeiro");
-    else if(entity==="Bookings") label=String(d.residentName||"Reserva");
-    else if(entity==="Payments") label=String(d.description||"Pagamento de reserva");
-    else if(entity==="Meetings") label=String(d.title||"Reunião / Assembleia");
-    else if(entity==="Assets") label=String(d.name||"Patrimônio");
-    else if(entity==="Documents") label=String(d.title||"Documento");
-    let verb=action==="create"?"Cadastro":action==="update"?"Alteração":action==="delete"?"Exclusão":action==="togglepayment"?(d.paid?"Mensalidade registrada":"Estorno de mensalidade"):action;
+    let description="";
+
+    // Usuários: traduz as operações técnicas (users/create/update/delete)
+    // para eventos administrativos compreensíveis.
+    if (action === "users") {
+      entity="Users";
+      const sub=String(p.subaction||"").toLowerCase();
+      const target=String(d.name || result?.name || d.username || result?.username || "Usuário").trim();
+      if (sub === "create") {
+        verb="Cadastro";
+        const role=String(d.role || result?.role || "").trim();
+        description=`Usuário: ${target}${role?` — Perfil: ${role}`:""}`;
+      } else if (sub === "update") {
+        verb="Alteração";
+        if (d.active !== undefined) {
+          description=`Usuário: ${target} — Status: ${(d.active===false || String(d.active).toLowerCase()==="false")?"Inativo":"Ativo"}`;
+        } else if (d.role) {
+          description=`Usuário: ${target} — Perfil: ${String(d.role)}`;
+        } else {
+          description=`Usuário: ${target}`;
+        }
+      } else if (sub === "delete") {
+        verb="Exclusão";
+        description=`Usuário: ${target}`;
+      } else {
+        return;
+      }
+    } else if (action === "changepassword") {
+      entity="Users";
+      id=String(session?.userId || id);
+      verb="Alteração";
+      description="Alteração da própria senha";
+    } else {
+      if(entity==="Residents") label=String(d.name||result?.resident?.name||"Morador");
+      else if(entity==="Transactions") label=String(d.description||"Lançamento financeiro");
+      else if(entity==="Bookings") label=String(d.residentName||"Reserva");
+      else if(entity==="Payments") label=String(d.description||"Pagamento de reserva");
+      else if(entity==="Meetings") label=String(d.title||"Reunião / Assembleia");
+      else if(entity==="Assets") label=String(d.name||"Patrimônio");
+      else if(entity==="Documents") label=String(d.title||"Documento");
+
+      verb=action==="create"?"Cadastro":action==="update"?"Alteração":action==="delete"?"Exclusão":action==="togglepayment"?(d.paid?"Mensalidade registrada":"Estorno de mensalidade"):action;
+      description=`${verb} — ${label}${d.month?` — ${d.month}`:""}`;
+    }
+
     const amount=Number(d.amount||result?.amount||result?.transaction?.amount||0)||0;
-    const description=`${verb} — ${label}${d.month?` — ${d.month}`:""}`;
-    ensureSheet("Audit").appendRow(H.Audit.map(h=>cell({id:Utilities.getUuid(),date:new Date().toISOString(),actor:String(session?.name||settings.responsavel||"Diretoria"),action:verb,entity,entityId:id,description,amount:h==="amount"?amount:undefined}[h])));
+    ensureSheet("Audit").appendRow(H.Audit.map(h=>cell({
+      id:Utilities.getUuid(),
+      date:new Date().toISOString(),
+      actor:String(session?.name||settings.responsavel||"Diretoria"),
+      action:verb,
+      entity,
+      entityId:id,
+      description,
+      amount:h==="amount"?amount:undefined
+    }[h])));
   } catch (_) {}
 }
 
