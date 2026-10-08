@@ -1,14 +1,8 @@
-AMVF2 — Correção da Prestação de Contas
+AMVF2 — correção segura do horário das reuniões
 
-Base: última versão estável do AMVF2 (AMVF2-GITHUB-RESET).
+Base: backup estável enviado pelo usuário em 07/10/2026.
+Alteração: somente src/App.jsx.
 
-Correção principal:
-- remove a referência inválida à variável `end` que fazia a tela de Prestação de Contas quebrar;
-- mantém a regra de mensalidade a partir do mês de cadastro;
-- calcula A receber como mensalidades pendentes + saldo de reservas;
-- mantém os demais módulos da versão estável sem alterações.
+A correção normaliza horários vindos da planilha (incluindo datas ISO/Date) apenas na exibição, detalhes, impressão/PDF e edição. Não altera a estrutura dos dados, o módulo de reuniões, o Apps Script ou o restante do sistema.
 
-Para aplicar no GitHub, substitua somente:
-src/App.jsx
-
-Não é necessário alterar o Apps Script para esta correção.
+Não executar setup().
